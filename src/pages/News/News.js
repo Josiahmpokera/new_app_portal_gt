@@ -146,24 +146,62 @@ const News = () => {
     }
   };
 
+  // Helper function to extract plain text from HTML
+  const stripHtml = (html) => {
+    if (!html) return '';
+    const tmp = document.createElement('DIV');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
+  };
+
   const handleSave = async (formData) => {
     try {
       let response;
+      
+      // Extract plain text from HTML for full_description
+      const fullDescriptionText = stripHtml(formData.fullDescription || '').trim();
+      
+      // Ensure thumbnail_image is a File object, not a URL string
+      let thumbnailImage = formData.thumbnail;
+      if (!thumbnailImage || (typeof thumbnailImage === 'string')) {
+        // If it's a URL string or null, don't include it (only send File objects)
+        thumbnailImage = undefined;
+      }
+      
+      // Filter gallery images to only include File objects
+      let galleryImages = undefined;
+      if (formData.gallery && Array.isArray(formData.gallery) && formData.gallery.length > 0) {
+        galleryImages = formData.gallery.filter(img => img instanceof File);
+        if (galleryImages.length === 0) {
+          galleryImages = undefined;
+        }
+      }
+      
       const submitData = {
-        ...formData,
-        category_id: formData.category,
-        sub_category_id: formData.subCategory || undefined,
-        thumbnail_image: formData.thumbnail,
-        gallery_images: formData.gallery,
+        title: formData.title,
+        short_description: formData.shortDescription,
+        full_description: fullDescriptionText, // Send as plain text string
+        category_id: parseInt(formData.category),
+        sub_category_id: formData.subCategory ? parseInt(formData.subCategory) : undefined,
         publish_status: formData.publishStatus,
         published_at: formData.scheduledPublishDate ? formData.scheduledPublishDate.toISOString().slice(0, 19).replace('T', ' ') : undefined,
         author_name: formData.authorName,
         news_type: formData.newsType,
-        tags: formData.tags,
+        tags: formData.tags && formData.tags.length > 0 ? formData.tags : undefined,
         seo_title: formData.seoTitle,
         seo_description: formData.seoDescription,
         seo_keywords: formData.seoKeywords,
       };
+      
+      // Only add thumbnail_image if it's a File object
+      if (thumbnailImage instanceof File) {
+        submitData.thumbnail_image = thumbnailImage;
+      }
+      
+      // Only add gallery_images if there are File objects
+      if (galleryImages && galleryImages.length > 0) {
+        submitData.gallery_images = galleryImages;
+      }
 
       if (selectedNews) {
         response = await api.news.update({

@@ -134,6 +134,12 @@ export const api = {
         body: JSON.stringify(body),
       });
     },
+    dropdown: async () => {
+      return apiRequest('/categories/dropdown', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+    },
     create: async (data) => {
       const formData = createFormData(data);
       return apiRequest('/categories/create', {
@@ -173,6 +179,12 @@ export const api = {
       return apiRequest('/sub-categories/list', {
         method: 'POST',
         body: JSON.stringify(body),
+      });
+    },
+    byCategory: async (categoryId) => {
+      return apiRequest('/sub-categories/by-category', {
+        method: 'POST',
+        body: JSON.stringify({ category_id: categoryId }),
       });
     },
     create: async (data) => {

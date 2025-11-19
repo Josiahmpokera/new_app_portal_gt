@@ -17,8 +17,9 @@ import FormToggle from '../../components/forms/FormToggle';
 import ImageUploader from '../../components/forms/ImageUploader';
 import RichTextEditor from '../../components/forms/RichTextEditor';
 import TagSelector from '../../components/forms/TagSelector';
+import { api } from '../../utils/api';
 
-const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, onCancel }) => {
+const NewsForm = ({ news = null, categories: propCategories = [], subCategories: propSubCategories = [], onSave, onCancel }) => {
   const [formData, setFormData] = useState({
     title: '',
     shortDescription: '',
@@ -37,18 +38,71 @@ const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, on
     seoKeywords: '',
   });
   const [errors, setErrors] = useState({});
+  const [categories, setCategories] = useState([]);
   const [availableSubCategories, setAvailableSubCategories] = useState([]);
   const [submitError, setSubmitError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingSubCategories, setLoadingSubCategories] = useState(false);
+
+  // Fetch categories on mount
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const response = await api.categories.dropdown();
+        if (response.success) {
+          setCategories(response.data || []);
+        }
+      } catch (err) {
+        console.error('Error fetching categories:', err);
+        // Fallback to prop categories if API fails
+        if (propCategories.length > 0) {
+          setCategories(propCategories);
+        }
+      }
+    };
+    fetchCategories();
+  }, []);
+
+  // Fetch sub-categories when category changes
+  useEffect(() => {
+    const fetchSubCategories = async () => {
+      if (formData.category) {
+        try {
+          setLoadingSubCategories(true);
+          const response = await api.subCategories.byCategory(parseInt(formData.category));
+          if (response.success) {
+            const subCats = response.data || [];
+            setAvailableSubCategories(subCats);
+            // Clear sub-category if it's not in the new list
+            if (formData.subCategory && !subCats.find((sub) => sub.id === parseInt(formData.subCategory))) {
+              setFormData((prev) => ({ ...prev, subCategory: '' }));
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching sub-categories:', err);
+          setAvailableSubCategories([]);
+        } finally {
+          setLoadingSubCategories(false);
+        }
+      } else {
+        setAvailableSubCategories([]);
+        setFormData((prev) => ({ ...prev, subCategory: '' }));
+      }
+    };
+    fetchSubCategories();
+  }, [formData.category]);
 
   useEffect(() => {
     if (news) {
+      const categoryId = news.category_id?.toString() || news.category?.toString() || '';
+      const subCategoryId = news.sub_category_id?.toString() || news.sub_category?.id?.toString() || news.subCategory?.toString() || '';
+      
       setFormData({
         title: news.title || '',
         shortDescription: news.short_description || news.shortDescription || '',
         fullDescription: news.full_description || news.fullDescription || '',
-        category: news.category_id?.toString() || news.category?.toString() || '',
-        subCategory: news.sub_category_id?.toString() || news.sub_category?.id?.toString() || news.subCategory?.toString() || '',
+        category: categoryId,
+        subCategory: subCategoryId,
         tags: news.tags?.map(t => typeof t === 'object' ? t.tag : t) || [],
         thumbnail: news.thumbnail_image_url || news.thumbnail || null,
         gallery: news.gallery_images_urls || news.gallery_images || news.gallery || [],
@@ -60,23 +114,22 @@ const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, on
         seoDescription: news.seo_description || news.seoDescription || '',
         seoKeywords: news.seo_keywords || news.seoKeywords || '',
       });
+      
+      // If category is set, fetch sub-categories
+      if (categoryId) {
+        api.subCategories.byCategory(parseInt(categoryId))
+          .then((response) => {
+            if (response.success) {
+              setAvailableSubCategories(response.data || []);
+            }
+          })
+          .catch((err) => {
+            console.error('Error fetching sub-categories:', err);
+          });
+      }
     }
     setErrors({});
   }, [news]);
-
-  useEffect(() => {
-    if (formData.category) {
-      const filtered = subCategories.filter(
-        (sub) => sub.category_id === parseInt(formData.category) || sub.parentCategory === parseInt(formData.category)
-      );
-      setAvailableSubCategories(filtered);
-      if (formData.subCategory && !filtered.find((sub) => sub.id === parseInt(formData.subCategory))) {
-        setFormData((prev) => ({ ...prev, subCategory: '' }));
-      }
-    } else {
-      setAvailableSubCategories([]);
-    }
-  }, [formData.category, subCategories]);
 
   const handleChange = (e) => {
     const { name, value, checked, type } = e.target;
@@ -96,6 +149,14 @@ const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, on
     setFormData((prev) => ({ ...prev, fullDescription: value }));
   };
 
+  // Helper function to extract plain text from HTML
+  const stripHtml = (html) => {
+    if (!html) return '';
+    const tmp = document.createElement('DIV');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
+  };
+
   const validate = () => {
     const newErrors = {};
     if (!formData.title.trim()) {
@@ -104,7 +165,8 @@ const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, on
     if (!formData.shortDescription.trim()) {
       newErrors.shortDescription = 'Short description is required';
     }
-    if (!formData.fullDescription.trim()) {
+    const fullDescText = stripHtml(formData.fullDescription || '');
+    if (!fullDescText.trim() || fullDescText.trim() === '') {
       newErrors.fullDescription = 'Full description is required';
     }
     if (!formData.category) {
@@ -112,6 +174,10 @@ const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, on
     }
     if (!formData.subCategory) {
       newErrors.subCategory = 'Sub-category is required';
+    }
+    if (!news && (!formData.thumbnail || typeof formData.thumbnail === 'string')) {
+      // Thumbnail is required for new news (must be a File object)
+      newErrors.thumbnail = 'Thumbnail image is required';
     }
     if (formData.publishStatus === 'scheduled' && !formData.scheduledPublishDate) {
       newErrors.scheduledPublishDate = 'Scheduled publish date is required';
@@ -139,12 +205,12 @@ const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, on
 
   const categoryOptions = categories.map((cat) => ({
     value: cat.id.toString(),
-    label: cat.name,
+    label: cat.name || cat.value,
   }));
 
   const subCategoryOptions = availableSubCategories.map((sub) => ({
     value: sub.id.toString(),
-    label: sub.name,
+    label: sub.name || sub.value,
   }));
 
   return (
@@ -161,28 +227,32 @@ const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, on
           </Typography>
           <Grid container spacing={2.5}>
             <Grid item xs={12}>
-              <FormInput
-                label="Title"
-                name="title"
-                value={formData.title}
-                onChange={handleChange}
-                error={errors.title}
-                required
-                size="small"
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <FormInput
-                label="Short Description"
-                name="shortDescription"
-                value={formData.shortDescription}
-                onChange={handleChange}
-                error={errors.shortDescription}
-                required
-                multiline
-                rows={3}
-                size="small"
-              />
+              <Box sx={{ display: 'flex', gap: 2.5, flexWrap: { xs: 'wrap', md: 'nowrap' } }}>
+                <Box sx={{ flex: '0 0 30%', minWidth: 0 }}>
+                  <FormInput
+                    label="Title"
+                    name="title"
+                    value={formData.title}
+                    onChange={handleChange}
+                    error={errors.title}
+                    required
+                    size="small"
+                    fullWidth
+                  />
+                </Box>
+                <Box sx={{ flex: '0 0 60%', minWidth: 0 }}>
+                  <FormInput
+                    label="Short Description"
+                    name="shortDescription"
+                    value={formData.shortDescription}
+                    onChange={handleChange}
+                    error={errors.shortDescription}
+                    required
+                    size="small"
+                    fullWidth
+                  />
+                </Box>
+              </Box>
             </Grid>
             <Grid item xs={12}>
               <Typography variant="body2" sx={{ mb: 1.5, fontWeight: 500, color: '#666' }}>
@@ -194,37 +264,44 @@ const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, on
                 error={errors.fullDescription}
               />
             </Grid>
-            <Grid item xs={12} md={6}>
-              <FormSelect
-                label="Category"
-                name="category"
-                value={formData.category}
-                onChange={handleChange}
-                options={categoryOptions}
-                error={errors.category}
-                required
-                size="small"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormSelect
-                label="Sub-Category"
-                name="subCategory"
-                value={formData.subCategory}
-                onChange={handleChange}
-                options={subCategoryOptions}
-                error={errors.subCategory}
-                required
-                disabled={!formData.category}
-                size="small"
-              />
-            </Grid>
             <Grid item xs={12}>
-              <TagSelector
-                label="Tags"
-                value={formData.tags}
-                onChange={(tags) => setFormData((prev) => ({ ...prev, tags }))}
-              />
+              <Box sx={{ display: 'flex', gap: 2.5, flexWrap: { xs: 'wrap', md: 'nowrap' } }}>
+                <Box sx={{ flex: '0 0 30%', minWidth: 0 }}>
+                  <FormSelect
+                    label="Category"
+                    name="category"
+                    value={formData.category}
+                    onChange={handleChange}
+                    options={categoryOptions}
+                    error={errors.category}
+                    required
+                    size="small"
+                    fullWidth
+                  />
+                </Box>
+                <Box sx={{ flex: '0 0 30%', minWidth: 0 }}>
+                  <FormSelect
+                    label="Sub-Category"
+                    name="subCategory"
+                    value={formData.subCategory}
+                    onChange={handleChange}
+                    options={subCategoryOptions}
+                    error={errors.subCategory}
+                    required
+                    disabled={!formData.category || loadingSubCategories}
+                    size="small"
+                    helperText={loadingSubCategories ? 'Loading sub-categories...' : ''}
+                    fullWidth
+                  />
+                </Box>
+                <Box sx={{ flex: '0 0 30%', minWidth: 0 }}>
+                  <TagSelector
+                    label="Tags"
+                    value={formData.tags}
+                    onChange={(tags) => setFormData((prev) => ({ ...prev, tags }))}
+                  />
+                </Box>
+              </Box>
             </Grid>
           </Grid>
         </Paper>
@@ -238,7 +315,14 @@ const NewsForm = ({ news = null, categories = [], subCategories = [], onSave, on
               <ImageUploader
                 label="Thumbnail"
                 value={formData.thumbnail}
-                onChange={(file) => setFormData((prev) => ({ ...prev, thumbnail: file }))}
+                onChange={(file) => {
+                  setFormData((prev) => ({ ...prev, thumbnail: file }));
+                  if (errors.thumbnail) {
+                    setErrors((prev) => ({ ...prev, thumbnail: '' }));
+                  }
+                }}
+                error={errors.thumbnail}
+                helperText={errors.thumbnail}
               />
             </Grid>
             <Grid item xs={12} md={6}>
